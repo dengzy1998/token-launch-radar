@@ -7,8 +7,20 @@
 // factors the snapshot itself supplies: a momentum factor from the protocol's
 // 7-day TVL change, and a maturity factor from how long the protocol has been
 // tracked. A confidence score and a value range (from the category's interquartile
-// multiples) say how much to trust each row. Nothing is keyed to a protocol's name:
-// every figure below is computed from the snapshot's own fields.
+// multiples) say how much to trust each row. Nothing in the valuation is keyed to
+// a protocol's name: every figure below is computed from the snapshot's own fields.
+//
+// The board's universe is the watchlist's own definition of pre-token, applied to
+// the whole snapshot rather than only above its TVL floor: a protocol ranks only
+// when it records no token (market cap, gecko id and symbol all null), its
+// category is not one of products of already-tokenized protocols (Bridge,
+// Canonical Bridge, Liquid Staking, Liquid Restaking, Restaked BTC, CEX), its
+// name ends in no version marker (a space followed by V2, v2 or 2.0), carries no
+// whole word wrapped, staked or staking, and does not begin with an exchange's
+// name (Binance, Coinbase, Bybit, Kraken, Bitget, OKX, Bitfinex, Gemini).
+// Products of protocols whose token already trades — an exchange's own venue, a
+// wrapped bitcoin, a bridge back to a tokenized parent — therefore never rank:
+// this radar prices only tokens that are still to come.
 //
 // Exports match main.ts: parseSnapshot, buildRadar, boardIssue, dataScript.
 
@@ -94,6 +106,33 @@ function ageInDays(listedAt: string | null, asOf: string): number | null {
   const a = Date.parse(asOf);
   if (Number.isNaN(t) || Number.isNaN(a)) return null;
   return Math.max(0, Math.round((a - t) / DAY_MS));
+}
+
+// ---------------------------------------------------------------------------
+// The board's universe: which protocols count as pre-token.
+
+const TOKEN_PRODUCT_CATEGORIES: ReadonlySet<string> = new Set([
+  'Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC', 'CEX',
+]);
+
+const EXCHANGE_NAME = /^(Binance|Coinbase|Bybit|Kraken|Bitget|OKX|Bitfinex|Gemini)\b/;
+const VERSION_SUFFIX = / (V2|v2|2\.0)$/;
+const WRAPPED_OR_STAKED_WORD = /\b(wrapped|staked|staking)\b/i;
+
+/**
+ * The watchlist's own pre-token tests, applied to any protocol in the snapshot:
+ * it records no token, its category is not one of wrapped, staked, bridged or
+ * exchange products of an already-tokenized protocol, and its name carries none
+ * of the markers of one — no version suffix, no wrapped/staked/staking word, no
+ * exchange's name up front.
+ */
+export function isPreToken(p: Protocol): boolean {
+  if (p.mcap_usd !== null || p.gecko_id !== null || p.symbol !== null) return false;
+  if (p.category !== null && TOKEN_PRODUCT_CATEGORIES.has(p.category)) return false;
+  if (VERSION_SUFFIX.test(p.name)) return false;
+  if (WRAPPED_OR_STAKED_WORD.test(p.name)) return false;
+  if (EXCHANGE_NAME.test(p.name)) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -351,20 +390,16 @@ export interface Radar {
   model_notes: string[];
 }
 
-const MIN_TVL_FOR_BOARD = 2_500_000;
-const MAX_ROWS = 360;
-
 /** Score every pre-token protocol and rank the board by implied value. */
 export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Radar } {
   const index = buildCompIndex(snapshot);
   const watchlist = new Set(snapshot.watchlist);
-  const preToken = snapshot.protocols.filter((p) => p.mcap_usd === null);
+  const preToken = snapshot.protocols.filter(isPreToken);
   const live = snapshot.protocols.filter((p) => p.mcap_usd !== null);
 
   const scored: RadarRow[] = [];
   for (const p of preToken) {
     const onWatchlist = watchlist.has(p.slug);
-    if (!onWatchlist && p.tvl_usd < MIN_TVL_FOR_BOARD) continue;
     const blend = blendedMultiple(index, p.category);
     const age = ageInDays(p.listed_at, snapshot.as_of);
     const momentum = momentumFactor(p.change_7d);
@@ -402,17 +437,10 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   }
 
   // Rank by implied value; deterministic tie-breaks keep both runs identical.
+  // Every protocol that passes the pre-token tests ranks — no cap and no TVL
+  // floor — so no watchlist protocol can fall off the board.
   scored.sort((a, b) => b.implied_value_usd - a.implied_value_usd || b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : 1));
-  const kept = scored.slice(0, MAX_ROWS);
-  // A capped board must never drop a watchlist protocol: swap any missing one in.
-  const keptSlugs = new Set(kept.map((r) => r.slug));
-  for (const row of scored) {
-    if (row.watchlist && !keptSlugs.has(row.slug)) {
-      kept[kept.length - 1] = row;
-      keptSlugs.add(row.slug);
-    }
-  }
-  kept.sort((a, b) => b.implied_value_usd - a.implied_value_usd || b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : 1));
+  const kept = scored;
   kept.forEach((row, i) => { row.rank = i + 1; });
 
   const board: BoardRow[] = kept.map((r) => ({
@@ -436,6 +464,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     categories: [...new Set(kept.map((r) => r.category ?? 'Uncategorized'))].sort(),
     chains: [...new Set(kept.flatMap((r) => r.chains))].sort(),
     model_notes: [
+      'Who ranks: the board applies the watchlist\'s own pre-token tests to every protocol in the snapshot, so products of already-tokenized protocols never rank — no exchange venues, no wrapped or staked products, no bridges back to a parent that already trades, no versioned re-launches of a tokenized parent.',
       'Base value: TVL x the median market-cap/TVL multiple of tokenized protocols in the same category (shrunk toward the global median when a category has few comparables; multiples are winsorized at the global 95th percentile so one outlier comparable cannot dominate a thin category).',
       'Momentum: the base is scaled by exp(0.006 x 7-day TVL change in %), clamped so one wild week can at most double or quarter a row.',
       'Maturity: protocols tracked for only a few days keep 55% of base value; the discount decays with an 18-month half-life toward zero.',
@@ -463,7 +492,7 @@ export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null
     seen.add(row.slug);
     const proto = bySlug.get(row.slug);
     if (proto === undefined) return `slug ${row.slug} is not in the snapshot`;
-    if (proto.mcap_usd !== null) return `slug ${row.slug} already records a token`;
+    if (!isPreToken(proto)) return `slug ${row.slug} is not pre-token under the board's definition`;
     if (!Number.isInteger(row.implied_value_usd) || row.implied_value_usd <= 0) return `row ${row.slug}: implied value is not a positive whole number`;
     if (row.implied_value_usd > previous) return `row ${row.slug}: implied value rises as rank ascends`;
     if (firstValue === null) firstValue = row.implied_value_usd;
