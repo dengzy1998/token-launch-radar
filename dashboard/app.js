@@ -78,6 +78,12 @@
     var rows = visible();
     el('count').innerHTML = 'Showing <b>' + rows.length + '</b> of ' + D.rows.length + ' ranked protocols';
     el('empty').hidden = rows.length > 0;
+    /* Keep the detail pane honest: if the selected protocol is filtered out,
+       fall to the first visible row so the two panes never disagree. */
+    if (rows.length && !rows.some(function (r) { return r.slug === state.selected; })) {
+      state.selected = rows[0].slug;
+      renderDetail(rows[0]);
+    }
     el('rows').innerHTML = rows.map(function (r) {
       var chains = r.chains.slice(0, 2).join(', ') + (r.chains.length > 2 ? ' +' + (r.chains.length - 2) : '');
       return '<tr data-slug="' + esc(r.slug) + '" tabindex="0" class="' + (state.selected === r.slug ? 'selected' : '') + '">' +
@@ -113,7 +119,7 @@
       '<h2>' + esc(r.name) + '</h2>' +
       '<div class="slug">' + esc(r.slug) + ' · rank #' + r.rank + ' of ' + D.rows.length + '</div>' +
       '<div class="badges">' +
-      (r.watchlist ? '<span class="pill hot">On the watchlist</span>' : '<span class="pill">Below the $50M floor — found early</span>') +
+      (r.watchlist ? '<span class="pill hot">On the watchlist</span>' : '<span class="pill">Not on the house watchlist — ranked by the model</span>') +
       '<span class="pill">' + esc(r.category || 'Uncategorized') + '</span>' +
       '<span class="pill">' + r.chains.length + ' chain' + (r.chains.length === 1 ? '' : 's') + '</span></div>' +
       '<div class="stat-grid">' +

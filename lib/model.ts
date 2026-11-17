@@ -130,6 +130,15 @@ function buildCompIndex(snapshot: Snapshot): CompIndex {
     peersByCategory.set(cat, peers);
     all.push(ratio);
   }
+  // Winsorize at the global 95th percentile before any category statistic is
+  // taken: a handful of tokenized names trade above 100x TVL, and in a thin
+  // category a single such outlier would otherwise become the whole signal
+  // (and would fake a razor-thin value range around a giant multiple).
+  const cap = quantile(all, 0.95);
+  for (const [cat, xs] of ratiosByCategory) {
+    ratiosByCategory.set(cat, xs.map((x) => Math.min(x, cap)));
+  }
+  for (let i = 0; i < all.length; i++) all[i] = Math.min(all[i]!, cap);
   const stats = (xs: number[]): CategoryStats => ({
     comps: xs.length,
     median: median(xs),
@@ -257,7 +266,9 @@ const CORE_STEP: Record<Family, (c: PlanContext) => string> = {
   dex: (c) => `Swap ${money(c.capLow)}-${money(c.capHigh)} of volume per week on ${c.name} on ${c.chain}, spread over 4-6 sessions, and hold a ${money(c.capLow)} position in its main liquidity pool for the full ${c.weeks} weeks.`,
   lending: (c) => `Supply ${money(c.capLow)}-${money(c.capHigh)} of a major asset (ETH or a dollar stablecoin) on ${c.name} on ${c.chain} and keep it supplied for ${c.weeks} weeks; add one borrow-and-repay cycle per month so the account shows both sides of the market.`,
   perps: (c) => `Trade ${money(c.capHigh * 3)}-${money(c.capHigh * 6)} of notional volume per month on ${c.name} with small, hedged positions, and keep ${money(c.capLow)} of margin posted for ${c.weeks} weeks so activity is sustained, not a one-week spike.`,
-  bridge: (c) => `Bridge ${money(c.capLow)}-${money(c.capHigh)} through ${c.name} in each direction at least twice a month, rotating across ${Math.min(c.chainCount, 4)} of its ${c.chainCount} supported chains, and keep the bridged funds working on the destination side for ${c.weeks} weeks.`,
+  bridge: (c) => c.chainCount > 1
+    ? `Bridge ${money(c.capLow)}-${money(c.capHigh)} through ${c.name} in each direction at least twice a month, rotating across ${Math.min(c.chainCount, 4)} of its ${c.chainCount} supported chains, and keep the bridged funds working on the destination side for ${c.weeks} weeks.`
+    : `Bridge ${money(c.capLow)}-${money(c.capHigh)} through ${c.name} in each direction at least twice a month, varying the asset and amount each time, and keep the bridged funds working on the destination side for ${c.weeks} weeks.`,
   staking: (c) => `Stake ${money(c.capLow)}-${money(c.capHigh)} of the base asset through ${c.name} on ${c.chain}, hold the receipt token for the full ${c.weeks} weeks, and restake or lend it in one integrated protocol so the position earns the extra points layer.`,
   yield: (c) => `Deposit ${money(c.capLow)}-${money(c.capHigh)} into the flagship vault of ${c.name} on ${c.chain} and leave it untouched for ${c.weeks} weeks; vault shares held across weekly snapshots are what points programs in this category usually count.`,
   cdp: (c) => `Open a collateral position on ${c.name}: deposit ${money(c.capLow)}-${money(c.capHigh)} of collateral on ${c.chain}, mint the stablecoin at a conservative 150-200% ratio, and keep the position open and healthy for ${c.weeks} weeks.`,
@@ -273,7 +284,9 @@ const ACTIVITY_STEP: Record<Family, (c: PlanContext) => string> = {
   dex: (c) => `Grow the footprint gradually: add a second pair or a second chain deployment of ${c.name} in week 3, and never let weekly volume fall to zero; consistent mid-size swappers are the cohort most DEX point programs snapshot.`,
   lending: (c) => `Vary the routine monthly: shift part of the supply between markets on ${c.name}, repay and redraw the borrow once, and keep utilisation records clean for ${c.weeks} weeks rather than maxing leverage for a single snapshot.`,
   perps: (c) => `Build a believable trading record: 15-25 trades a month on ${c.name}, varied pairs and sizes, no wash patterns; perps venues weight maker fills and open-interest time when they convert activity into allocations.`,
-  bridge: (c) => `Keep a steady cadence of 6-10 bridge transactions a month through ${c.name} with varied amounts between ${money(Math.max(50, c.capLow / 4))} and ${money(c.capHigh)}; bridges score distinct months active and distinct routes, not one giant transfer.`,
+  bridge: (c) => c.chainCount > 1
+    ? `Keep a steady cadence of 6-10 bridge transactions a month through ${c.name} with varied amounts between ${money(Math.max(50, c.capLow / 4))} and ${money(c.capHigh)}; bridges score distinct months active and distinct routes, not one giant transfer.`
+    : `Keep a steady cadence of 6-10 bridge transactions a month through ${c.name} with varied amounts between ${money(Math.max(50, c.capLow / 4))} and ${money(c.capHigh)}; bridges score distinct months active and total routed volume, not one giant transfer.`,
   staking: (c) => `Claim and re-stake rewards monthly and, if ${c.name} runs a points season, route the receipt token through its named partners; write down each season's rules because restaking points usually convert only for wallets active in every epoch.`,
   yield: (c) => `Rotate a quarter of the position into the newest vault on ${c.name} each month while keeping the core deposit intact; early depositors in fresh vaults are typically weighted more heavily than late arrivals.`,
   cdp: (c) => `Use the minted stablecoin inside the ecosystem: park it in the protocol's own savings or liquidity product for the ${c.weeks} weeks, and top up collateral promptly whenever the ratio drifts toward liquidation.`,
@@ -423,7 +436,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     categories: [...new Set(kept.map((r) => r.category ?? 'Uncategorized'))].sort(),
     chains: [...new Set(kept.flatMap((r) => r.chains))].sort(),
     model_notes: [
-      'Base value: TVL x the median market-cap/TVL multiple of tokenized protocols in the same category (shrunk toward the global median when a category has few comparables).',
+      'Base value: TVL x the median market-cap/TVL multiple of tokenized protocols in the same category (shrunk toward the global median when a category has few comparables; multiples are winsorized at the global 95th percentile so one outlier comparable cannot dominate a thin category).',
       'Momentum: the base is scaled by exp(0.006 x 7-day TVL change in %), clamped so one wild week can at most double or quarter a row.',
       'Maturity: protocols tracked for only a few days keep 55% of base value; the discount decays with an 18-month half-life toward zero.',
       'Range and confidence come from the category multiple\'s interquartile spread, its comparable count, and how complete the row\'s own data is.',
