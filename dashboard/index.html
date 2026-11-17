@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Radar — Pre-Launch Value Board</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">◉</div>
+    <div>
+      <h1>TOKEN RADAR</h1>
+      <p class="tagline">Protocols that have not issued a token yet, ranked by what that token would be worth — and how to farm each one.</p>
+    </div>
+  </div>
+  <div class="chips" id="chips"></div>
+</header>
+
+<section class="model-panel" id="modelPanel">
+  <h2>How the model works</h2>
+  <div class="model-cols" id="modelNotes"></div>
+  <p class="model-formula" id="modelFormula"></p>
+</section>
+
+<section class="controls">
+  <label class="ctl grow">Search
+    <input type="search" id="q" placeholder="Protocol name or slug…">
+  </label>
+  <label class="ctl">Category
+    <select id="category"></select>
+  </label>
+  <label class="ctl">Chain
+    <select id="chain"></select>
+  </label>
+  <label class="ctl">Sort by
+    <select id="sort">
+      <option value="rank">Implied value (rank)</option>
+      <option value="tvl">TVL</option>
+      <option value="momentum">7d momentum</option>
+      <option value="confidence">Confidence</option>
+      <option value="age">Age (oldest first)</option>
+    </select>
+  </label>
+  <label class="ctl check">
+    <input type="checkbox" id="watchOnly"> Watchlist only
+  </label>
+  <div class="count" id="count"></div>
+</section>
+
+<main class="layout">
+  <section class="board-wrap">
+    <table class="board" id="board">
+      <thead>
+        <tr>
+          <th class="num">#</th>
+          <th>Protocol</th>
+          <th>Category</th>
+          <th>Chains</th>
+          <th class="num">TVL</th>
+          <th class="num">7d</th>
+          <th class="num">Implied value</th>
+          <th>Confidence</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p class="empty" id="empty" hidden>No protocols match the current filters.</p>
+  </section>
+  <aside class="detail" id="detail"></aside>
+</main>
+
+<footer>
+  <p>Built from a sealed DefiLlama snapshot (<span id="footDate"></span>). Implied values are model estimates, not prices: a protocol records no token until it issues one. Farm plans are starting points — re-check each protocol's live terms before committing funds.</p>
+</footer>
+
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
